@@ -3,18 +3,16 @@ recommend.py
 ------------
 Core recommendation logic for the Car Recommendation System.
 
-Implements two strategies as required by the project synopsis:
-  1. KNN (K-Nearest Neighbours) — primary recommender
-  2. Cosine Similarity          — secondary / comparison recommender
-
-Both strategies apply hard categorical filters FIRST (brand, fuel,
-transmission), then rank the remaining candidates numerically.
-This fixes the bug where filter selections were being ignored.
+v2 changes:
+  - Removed Cosine Similarity (cleaner UX, as per plan)
+  - Removed K-Means (removed as requested)
+  - Added KNN confidence score based on normalised neighbour distance
+  - Added feature match breakdown for "Why this car?" explainer
+  - Kept hard categorical filter logic intact
 """
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics.pairwise import cosine_similarity
 
 from preprocess import CATEGORICAL_COLS, NUMERIC_COLS, encode_user_input
 
@@ -34,15 +32,48 @@ def _apply_hard_filters(df: pd.DataFrame, user_input: dict) -> pd.DataFrame:
         ("Transmission", "Transmission"),
     ]:
         value = user_input.get(key)
-        if value and value not in ("Select Brand", "Select Fuel Type", "Select Transmission"):
+        if value and value not in ("Select Brand", "Select Fuel Type",
+                                   "Select Transmission", "Any", None):
             candidate = filtered[filtered[col] == value]
-            if not candidate.empty:          # only apply if it leaves rows
+            if not candidate.empty:
                 filtered = candidate
 
     return filtered.reset_index(drop=True)
 
 
-# ── Strategy 1 : KNN ─────────────────────────────────────────────────────────
+def _confidence_from_distance(distance: float,
+                               max_dist: float = 3.0) -> float:
+    """
+    Convert a KNN Euclidean distance into a 0–100% confidence score.
+    Closer neighbours → higher confidence.
+    """
+    confidence = max(0.0, 1.0 - distance / max_dist) * 100
+    return round(confidence, 1)
+
+
+def _feature_match_breakdown(row: pd.Series,
+                              user_input: dict) -> dict:
+    """
+    Compute per-feature relative closeness (0–100%) for the "Why this car?"
+    explainer shown in the Streamlit UI.
+
+    Returns a dict: {feature_label: match_pct}
+    """
+    checks = {
+        "Price":    ("Price",         user_input.get("Price",         5.0),   30.0),
+        "Engine":   ("Engine(CC)",    user_input.get("Engine(CC)",    1200),   3000),
+        "Mileage":  ("Mileage(Km/L)", user_input.get("Mileage(Km/L)", 18.0),  40.0),
+        "Seats":    ("Seats",         user_input.get("Seats",         5),      5.0),
+    }
+    breakdown = {}
+    for label, (col, target, scale) in checks.items():
+        diff = abs(float(row[col]) - float(target))
+        score = max(0.0, 100.0 - (diff / scale) * 100)
+        breakdown[label] = round(min(score, 100.0), 1)
+    return breakdown
+
+
+# ── KNN Recommender ───────────────────────────────────────────────────────────
 
 def recommend_knn(user_input: dict,
                   df: pd.DataFrame,
@@ -57,11 +88,12 @@ def recommend_knn(user_input: dict,
     -----
     1. Hard-filter the dataset by categorical preferences.
     2. Encode the user vector and query the KNN index built on the
-       *full* dataset to get neighbour indices.
+       full dataset to get neighbour indices + distances.
     3. Intersect neighbour indices with the filtered subset so that
        only matching cars survive.
-    4. Fall back to the top-n nearest neighbours from the full dataset
-       if the intersection is empty (edge case).
+    4. Attach confidence score and feature-match breakdown to each result.
+    5. Fall back to top-n nearest neighbours from the full dataset if
+       the intersection is empty (edge case).
 
     Parameters
     ----------
@@ -75,91 +107,72 @@ def recommend_knn(user_input: dict,
 
     Returns
     -------
-    pd.DataFrame of top-n recommended cars
+    pd.DataFrame of top-n recommended cars, with added columns:
+        knn_distance  – raw Euclidean distance
+        confidence    – 0-100 confidence score
+        match_Price / match_Engine / match_Mileage / match_Seats
     """
     user_vec = encode_user_input(user_input, columns, scaler)
 
     # Get a generous pool of neighbours from the full model
     pool_size = min(len(df), max(50, n * 10))
     distances, indices = model.kneighbors(user_vec, n_neighbors=pool_size)
-    neighbour_indices = indices[0]
+    neighbour_indices  = indices[0]
+    neighbour_dists    = distances[0]
 
     # Hard-filter the dataset
-    filtered_df = _apply_hard_filters(df, user_input)
+    filtered_df  = _apply_hard_filters(df, user_input)
     filtered_idx = set(filtered_df.index)
 
-    # Keep only neighbours that also pass the hard filters
-    valid = [i for i in neighbour_indices if i in filtered_idx]
+    # Keep only neighbours that pass the hard filters
+    valid_pairs = [(i, d) for i, d in zip(neighbour_indices, neighbour_dists)
+                   if i in filtered_idx]
 
-    if valid:
-        results = df.iloc[valid[:n]]
+    if valid_pairs:
+        valid_idx   = [p[0] for p in valid_pairs[:n]]
+        valid_dists = [p[1] for p in valid_pairs[:n]]
     else:
-        # Graceful fallback – relax filters, return closest matches
-        results = df.iloc[neighbour_indices[:n]]
+        # Graceful fallback – relax filters
+        valid_idx   = list(neighbour_indices[:n])
+        valid_dists = list(neighbour_dists[:n])
+
+    results = df.iloc[valid_idx].copy()
+    results["knn_distance"] = valid_dists
+    results["confidence"]   = results["knn_distance"].apply(
+        _confidence_from_distance
+    )
+
+    # Per-row feature match breakdown
+    breakdowns = results.apply(
+        lambda row: _feature_match_breakdown(row, user_input), axis=1
+    )
+    breakdown_df = pd.DataFrame(list(breakdowns))
+    breakdown_df.columns = [f"match_{c}" for c in breakdown_df.columns]
+    results = pd.concat([results.reset_index(drop=True), breakdown_df], axis=1)
 
     results = results.drop_duplicates(subset=["Name"])
     return results.head(n).reset_index(drop=True)
 
 
-# ── Strategy 2 : Cosine Similarity ───────────────────────────────────────────
+# ── Price Prediction Helper ───────────────────────────────────────────────────
 
-def recommend_cosine(user_input: dict,
-                     df: pd.DataFrame,
-                     scaler,
-                     columns,
-                     n: int = 5) -> pd.DataFrame:
+def predict_price(user_specs: dict,
+                  rf_model,
+                  rf_columns) -> float:
     """
-    Recommend cars using Cosine Similarity on scaled numeric features.
-
-    Steps
-    -----
-    1. Hard-filter the dataset by categorical preferences.
-    2. Scale numeric features of the filtered subset.
-    3. Compute cosine similarity between the user vector and each car.
-    4. Return the top-n highest-similarity cars.
+    Use the trained Random Forest to estimate a fair market price
+    for a car described by user_specs.
 
     Parameters
     ----------
-    Same as recommend_knn (no `model` needed).
+    user_specs : dict with keys matching RF_FEATURE_COLS
+    rf_model   : trained RandomForestRegressor
+    rf_columns : list of column names the RF was trained on
 
     Returns
     -------
-    pd.DataFrame with an added `similarity_score` column (0–1).
+    Predicted price in Lakhs (float)
     """
-    filtered_df = _apply_hard_filters(df, user_input).copy()
-
-    if filtered_df.empty:
-        return filtered_df   # nothing to recommend
-
-    # Build numeric matrix for the filtered subset
-    num_matrix = filtered_df[NUMERIC_COLS].values.astype(float)
-
-    # User numeric vector (same order as NUMERIC_COLS)
-    user_vec = np.array([[
-        user_input.get("Engine(CC)",    1000),
-        user_input.get("Mileage(Km/L)", 20.0),
-        user_input.get("Seats",         5),
-        user_input.get("Price",         5.0),
-    ]], dtype=float)
-
-    # Scale together so the user point lives in the same space
-    from sklearn.preprocessing import MinMaxScaler as _MMS
-    _scaler = _MMS()
-    combined = np.vstack([num_matrix, user_vec])
-    combined_scaled = _scaler.fit_transform(combined)
-
-    data_scaled = combined_scaled[:-1]
-    user_scaled  = combined_scaled[-1:]
-
-    sims = cosine_similarity(user_scaled, data_scaled)[0]   # shape (n_rows,)
-
-    filtered_df = filtered_df.copy()
-    filtered_df["similarity_score"] = (sims * 100).round(2)
-
-    result = (filtered_df
-              .drop_duplicates(subset=["Name"])
-              .sort_values("similarity_score", ascending=False)
-              .head(n)
-              .reset_index(drop=True))
-
-    return result
+    row = {col: user_specs.get(col, 0) for col in rf_columns}
+    X   = pd.DataFrame([row])
+    return float(rf_model.predict(X)[0])
