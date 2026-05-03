@@ -73,27 +73,29 @@ with st.sidebar:
         ["Any"] + sorted(df["Transmission"].unique()),
     )
 
+    # Engine CC — step 100
     engine_cc = st.slider(
         "🔧 Engine (CC)",
         int(df["Engine(CC)"].min()),
         int(df["Engine(CC)"].max()),
         1200,
+        step=100,
     )
 
+    # Mileage — integers only
     mileage = st.slider(
         "⛽ Min. Mileage (km/l)",
-        float(df["Mileage(Km/L)"].min()),
-        float(df["Mileage(Km/L)"].max()),
-        15.0,
+        int(df["Mileage(Km/L)"].min()),
+        int(df["Mileage(Km/L)"].max()),
+        15,
     )
 
-    seats = st.slider("💺 Seats", 2, 7, 5)
-
+    # Budget — integers only
     price = st.slider(
         "💰 Budget (Lakhs)",
-        float(df["Price"].min()),
-        float(df["Price"].max()),
-        5.0,
+        int(df["Price"].min()),
+        int(df["Price"].max()),
+        5,
     )
 
     n_results = st.slider("📋 Number of Results", 3, 10, 5)
@@ -250,14 +252,14 @@ with tab_price:
     col1, col2 = st.columns(2)
 
     with col1:
-        pe_engine   = st.number_input("🔧 Engine (CC)", 600, 5000, 1200, step=50)
-        pe_mileage  = st.number_input("⛽ Mileage (km/l)", 5.0, 50.0, 18.0, step=0.5)
+        pe_engine  = st.number_input("🔧 Engine (CC)", 600, 5000, 1200, step=100)
+        pe_mileage = st.number_input("⛽ Mileage (km/l)", 5, 50, 18, step=1)
         pe_seats    = st.selectbox("💺 Seats", [2, 4, 5, 6, 7], index=2)
         pe_power    = st.number_input("⚡ Power (bhp)", 30.0, 600.0, 85.0, step=5.0)
 
     with col2:
-        pe_age      = st.slider("📅 Car Age (years)", 1, 20, 5)
-        pe_km       = st.number_input("🛣️ Kilometers Driven", 1000, 500000, 50000, step=1000)
+        pe_age     = st.slider("📅 Car Age (years)", 0, 20, 3)
+        pe_km      = st.number_input("🛣️ Kilometers Driven", 0, 500000, 50000, step=1000)
         pe_owner    = st.selectbox("👤 Owner Type", list(OWNER_TYPE_MAP.keys()))
         pe_fuel     = st.selectbox("⛽ Fuel Type", list(FUEL_TYPE_MAP.keys())[:4])
         pe_trans    = st.selectbox("🕹️ Transmission", list(TRANSMISSION_MAP.keys()))
@@ -319,4 +321,3 @@ with tab_price:
             """,
             unsafe_allow_html=True,
         )
-        
