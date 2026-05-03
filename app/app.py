@@ -90,6 +90,8 @@ with st.sidebar:
         15,
     )
 
+    seats = st.slider("💺 Seats", 2, 7, 5)
+
     # Budget — integers only
     price = st.slider(
         "💰 Budget (Lakhs)",
