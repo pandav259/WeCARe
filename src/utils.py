@@ -1,19 +1,5 @@
-"""
-utils.py
---------
-Shared utility functions for the Car Recommendation System.
-
-v2 additions:
-  - confidence_bar() — HTML progress-bar for confidence indicator
-  - feature_match_html() — "Why this car?" explainer bar chart
-  - persona_label() — maps KNN results to user persona
-  - price_delta_str() — cleaner price delta formatting
-"""
-
 import pandas as pd
 
-
-# ── Brand logo map ───────────────────────────────────────────────────────────
 
 BRAND_LOGOS: dict[str, str] = {
     "Maruti":       "https://upload.wikimedia.org/wikipedia/commons/thumb/1/12/Suzuki_logo_2.svg/120px-Suzuki_logo_2.svg.png",
@@ -48,8 +34,6 @@ def get_brand_logo(manufacturer: str) -> str:
     return BRAND_LOGOS.get(manufacturer, PLACEHOLDER_LOGO)
 
 
-# ── Formatting helpers ───────────────────────────────────────────────────────
-
 def format_price(price_lakhs: float) -> str:
     if price_lakhs >= 100:
         return f"₹{price_lakhs:.2f} Lakhs (1 Cr+)"
@@ -57,7 +41,6 @@ def format_price(price_lakhs: float) -> str:
 
 
 def price_delta_str(actual: float, budget: float) -> tuple[str, str]:
-    """Return (text, colour) for the price delta badge."""
     delta = actual - budget
     if delta > 0:
         return f"+₹{delta:.2f}L over budget", "#e05252"
@@ -73,13 +56,7 @@ def transmission_icon(transmission: str) -> str:
     return "🔄" if transmission == "Automatic" else "🕹️"
 
 
-# ── Confidence indicator ─────────────────────────────────────────────────────
-
 def confidence_bar_html(confidence: float) -> str:
-    """
-    Return an HTML snippet with a colour-coded progress bar for confidence.
-    confidence: 0–100 float.
-    """
     color = "#1db954" if confidence >= 70 else ("#f0a500" if confidence >= 40 else "#e05252")
     label = "High" if confidence >= 70 else ("Medium" if confidence >= 40 else "Low")
     return (
@@ -94,13 +71,7 @@ def confidence_bar_html(confidence: float) -> str:
     )
 
 
-# ── Feature match breakdown ──────────────────────────────────────────────────
-
 def feature_match_html(row: "pd.Series") -> str:
-    """
-    Build a small HTML table showing the top match features from a result row.
-    Expects columns: match_Price, match_Engine, match_Mileage, match_Seats
-    """
     features = {
         "💰 Price":   row.get("match_Price",   0),
         "🔧 Engine":  row.get("match_Engine",  0),
@@ -127,13 +98,7 @@ def feature_match_html(row: "pd.Series") -> str:
     )
 
 
-# ── Persona labelling ────────────────────────────────────────────────────────
-
 def persona_label(price: float, seats: int, engine_cc: int) -> tuple[str, str]:
-    """
-    Assign a buyer persona label and emoji based on the car's specs.
-    Returns (emoji, label).
-    """
     if price <= 6 and engine_cc <= 1200:
         return "💸", "Budget Commuter"
     if seats >= 7 or engine_cc >= 2000:
@@ -144,8 +109,6 @@ def persona_label(price: float, seats: int, engine_cc: int) -> tuple[str, str]:
         return "🏙️", "City Driver"
     return "🚗", "All-Rounder"
 
-
-# ── Dataset summary ──────────────────────────────────────────────────────────
 
 def dataset_summary(df: "pd.DataFrame") -> dict:
     return {
